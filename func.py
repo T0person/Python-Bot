@@ -20,6 +20,19 @@ bot = Bot(token=API_TOKEN)
 dp = Dispatcher()
 
 
+def generate_main_keyboard():
+    kb = [[
+        types.KeyboardButton(text="Начать игру"),
+        types.KeyboardButton(text="Посмотреть результаты всех пользователей")
+    ],
+    ]
+    keyboard = types.ReplyKeyboardMarkup(
+        keyboard=kb,
+        resize_keyboard=True
+    )
+    return keyboard
+
+
 def generate_options_keyboard(answer_options, right_answer):
     builder = InlineKeyboardBuilder()
 
@@ -35,11 +48,8 @@ def generate_options_keyboard(answer_options, right_answer):
 
 # начинаем квиз
 async def new_quiz(message):
-    user_id = message.from_user.id
-    current_question_index = 0
-    questions_true = 0
-    await update_quiz_index(user_id, current_question_index, questions_true)
-    await get_question(message, user_id)
+    await update_quiz_index(message.from_user.id, message.from_user.full_name)
+    await get_question(message, message.from_user.id)
 
 
 # Получение из БД
@@ -57,22 +67,13 @@ async def get_quiz_index(user_id):
 
 
 # Обновление БД
-async def update_quiz_index(user_id, index, questions_true):
+async def update_quiz_index(user_id, full_name, index=0, questions_true=0, last_result=0):
     # Создаем соединение с базой данных (если она не существует, она будет создана)
     async with aiosqlite.connect(DB_NAME) as db:
         # Вставляем новую запись или заменяем ее, если с данным user_id уже существует
-        await db.execute('INSERT OR REPLACE INTO quiz_state (user_id, question_index, questions_true) VALUES (?, ?, ?)',
-                         (user_id, index, questions_true))
-        # Сохраняем изменения
-        await db.commit()
-
-
-async def update_questions_true(user_id, questions_true):
-    # Создаем соединение с базой данных (если она не существует, она будет создана)
-    async with aiosqlite.connect(DB_NAME) as db:
-        # Вставляем новую запись или заменяем ее, если с данным user_id уже существует
-        await db.execute('UPDATE quiz_state SET questions_true = ? WHERE user_id = ?',
-                         (questions_true, user_id))
+        await db.execute(
+            'INSERT OR REPLACE INTO quiz_state (user_id, full_name, question_index, questions_true, last_result) VALUES (?, ?, ?, ?, ?)',
+            (user_id, full_name, index, questions_true, last_result))
         # Сохраняем изменения
         await db.commit()
 
@@ -81,13 +82,24 @@ async def get_questions_true(user_id):
     # Подключаемся к базе данных
     async with aiosqlite.connect(DB_NAME) as db:
         # Получаем запись для заданного пользователя
-        async with db.execute('SELECT questions_true FROM quiz_state WHERE user_id = (?)', (user_id,)) as cursor:
-            # Возвращаем результат
-            results = await cursor.fetchone()
-            if results is not None:
-                return results[0]
-            else:
-                return 0
+        try:
+            async with db.execute('SELECT questions_true FROM quiz_state WHERE user_id = (?)', (user_id,)) as cursor:
+                # Возвращаем результат
+                results = await cursor.fetchone()
+                if results is not None:
+                    return results[0]
+                else:
+                    return 0
+        except:
+            return 0
+
+
+async def get_result_all_users():
+    # Подключаемся к базе данных
+    async with aiosqlite.connect(DB_NAME) as db:
+        # Получение имени пользователя и ответы
+        async with db.execute("SELECT full_name, last_result FROM quiz_state") as cursor:
+            return await cursor.fetchall()
 
 
 # Функция создания БД
@@ -96,8 +108,8 @@ async def create_table():
     async with aiosqlite.connect(DB_NAME) as db:
         # Создаем таблицу
         await db.execute(
-            '''CREATE TABLE IF NOT EXISTS quiz_state (user_id INTEGER PRIMARY KEY, question_index INTEGER, 
-            questions_true INTEGER)''')
+            '''CREATE TABLE IF NOT EXISTS quiz_state (user_id INTEGER PRIMARY KEY, full_name NCHAR, question_index INTEGER, 
+            questions_true INTEGER, last_result INTEGER)''')
         # Сохраняем изменения
         await db.commit()
 
